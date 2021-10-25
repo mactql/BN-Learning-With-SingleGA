@@ -1,0 +1,5 @@
+package Models
+
+class BNStructure {
+
+}
