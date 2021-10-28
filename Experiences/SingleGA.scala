@@ -1,18 +1,22 @@
 package Experiences
 
+import Models.BNStructure
 import Experiences.SingleGA._
+import Models.BNStructure
 import Models.ScoreModels._
 import Utils._
 import Operations.GAOperations._
-
 import org.apache.spark.sql._
 import redis.clients.jedis._
+
 import scala.collection._
 import breeze.linalg._
 
 object SingleGA{
 
-	var numOfPopulation:Int = 100
+	var maxParent = 4
+
+	var numOfPopulation = 100
 
 	def run(): Unit = {
 		val ga: SingleGA = new SingleGA()
@@ -50,10 +54,13 @@ class SingleGA extends java.io.Serializable{
 		 */
 		val nodeValueMap:Set[(Int,String)] = BayesTools.getNodeValueMap(textfile).toSet
 
-		//初始化种群
-		val populationArray:Array[DenseMatrix[Int]] = initPopulationAllWithRemoveCycle(numOfPopulation * 2, numOfAttributes, sc)
+		//初始化种群，n个变量的BN结构可以用n*n的邻接矩阵表示，aij=1则表示i是j的父节点，i指向j
+		val BNMatrixPopulation:Array[DenseMatrix[Int]] = initPopulationAllWithRemoveCycle(numOfPopulation * 2, numOfAttributes, sc)
 
-		
+		//将DenseMatrix种群矩阵数组转化为BN结构Model的数组
+		var BNStructurePopulation:Array[BNStructure] = BNStructure.BNConvertFromMatrix(BNMatrixPopulation)
+
+
 	}
 
 }
