@@ -2,7 +2,7 @@ package Experiences
 
 import Models.BNStructure
 import Models.ScoreModels.BICScore
-import Experiences.SingleGA._
+import Experiences.localtest._
 import Models.BNStructure
 import Models.ScoreModels._
 import Operations.GAOperations
@@ -15,9 +15,9 @@ import scala.collection._
 import breeze.linalg._
 import org.apache.spark.SparkConf
 
-import scala.util.control.Breaks.break
 
-object SingleGA{
+
+object localtest{
 
 	var maxParent = 4
 
@@ -28,12 +28,12 @@ object SingleGA{
 	var SPARK_JARS_HOME = "/usr/hdp/3.1.0.0-78/spark2/jars/"
 
 	def run(): Unit = {
-		val ga: SingleGA = new SingleGA()
+		val ga: localtest = new localtest
 		ga.run()
 	}
 }
 
-class SingleGA extends java.io.Serializable{
+class localtest extends java.io.Serializable{
 
 	var sampleName = "cancer"
 	var inputPath = "/Users/caiyiming/SingleGA/Samples/cancer_50000.csv"
@@ -42,23 +42,18 @@ class SingleGA extends java.io.Serializable{
 
 	def run(): Unit = {
 		var tournamentSize:Int = 2
-//		val scoreJedis:Jedis = new Jedis(RedisConfig.redisHosts, RedisConfig.redisPort)
-//		val scoreJedisPipeline:Pipeline = scoreJedis.pipelined()
+		//		val scoreJedis:Jedis = new Jedis(RedisConfig.redisHosts, RedisConfig.redisPort)
+		//		val scoreJedisPipeline:Pipeline = scoreJedis.pipelined()
+
 
 		//创建sparkContext
-		val conf = new SparkConf().setAppName("SingleGA")
-				.setMaster("yarn")
-				.setSparkHome(SPARK_JARS_HOME)
-		val sc = new SparkSession.Builder().config(conf).getOrCreate().sparkContext
+		val sc = new SparkSession.Builder().appName("ga").master("local").getOrCreate().sparkContext
 
 		//读取输入数据，最小分区数为48(师兄设置的),用collect将RDD转化为数组，即样本数据的二维数组
 		val textfile:Array[Array[String]] = sc.textFile(inputPath,48).cache().map(_.split(",")).collect()
 
 		//获取样本数据的节点数目
 		val numOfAttributes = textfile(0).length
-
-		//记录算法开始时间
-		var startTime = System.currentTimeMillis()
 
 		/*
 			将每个节点的取值种类用,连成string作为Value，用index作为key，组成set集合
@@ -108,23 +103,14 @@ class SingleGA extends java.io.Serializable{
 				sameTimesScore = curBestBN.score
 			}else
 				countBestSameTimes += 1
-			countIterNum += 1
 		}
 
-		//记录算法执行的时间
-		val executeTime:Double = (System.currentTimeMillis()-startTime)/1000.0
-
 		finalBNStructure = curBestBN
-//finalBNStructure.printBNStructure()
+		//finalBNStructure.printBNStructure()
 
-		//f1评分为评估学习的BN结构准确率
 		val f1Score:Double = EndUtils.evaluateAccuracyOfTruePositive(sampleName,finalBNStructure.structure,sc)
-
-		println("*****************************************************")
-		println("F1score: " + f1Score)
-		println("Execute time: " + executeTime + "s")
-		println("Stop iter: " + countIterNum)
-		println("*****************************************************")
+		println()
+		println( " f1score： " + f1Score)
 		broadNodeValue.destroy()
 
 

@@ -1,5 +1,13 @@
 package Models.ScoreModels
 
+import Models.{BNStructure, ScoreCondition}
+import Utils.BayesTools.joinStringPair
+import Utils.BayesTools
+import breeze.linalg.DenseMatrix
+import org.apache.spark.broadcast.Broadcast
+
+import scala.collection.{Map, Set, mutable}
+
 
 
 class BICScore extends java.io.Serializable{
@@ -13,4 +21,206 @@ class BICScore extends java.io.Serializable{
 		numOfAttributes = initNumOfAttr
 		this.numOfSamples = dataSet.length
 	}
+
+	//构造计算需要的集合及调用BIC评分计算函数完成种群的评分
+	def calculateScore(population: Array[DenseMatrix[Int]], textfile:Array[Array[String]],nodeValueSet:Set[(Int,String)]): Array[BNStructure] = {
+
+		//获取每个节点的ij和ijk的condition，具体解释看函数内部
+		val allneeds:Set[ScoreCondition] = this.getAllNeeds(population,nodeValueSet)
+//		val fullNeedCount:Array[String] = new Array[String](2)
+//		fullNeedCount(0) = "full need count
+//		fullNeedCount(1) = needs.size.toString
+//		CSVForIteratorExp.writeIntoCSV(BICScore.eachIterCountCalNumFile, fullNeedCount)
+
+		//对每一种condition计算在样本中的数量
+		val dataMaps:Map[ScoreCondition, Long] = this.getMapsFromData(textfile, allneeds)
+
+		/*dataMaps.foreach(a =>{
+			a._1.needs.foreach(b => print(b._1 + " " + b._2))
+			println(" " + a._2)
+		})*/
+
+		//用每个BN矩阵+conditionmap+每个节点的取值种类计算BIC评分并构建BN结构
+		population.map(BNMatrix=>{
+			new BNStructure(BNMatrix, calculate(BNMatrix, dataMaps, nodeValueSet))
+		})
+	}
+
+	/*
+		获取需要的condition的集合
+		包含每个节点的{父节点取值condition + 父节点取值condition时自身节点取值的所有可能的联合condition}
+	 */
+	def getAllNeeds(population: Array[DenseMatrix[Int]], nodeValueSet: Set[(Int, String)]): Set[ScoreCondition] = {
+		var allNeeds = mutable.Set[ScoreCondition]()
+		val eachConditions:Array[Set[ScoreCondition]] = population.map(BNMatrix=>{
+			this.getNodeNeeds(BNMatrix,nodeValueSet)
+		})
+		eachConditions.foreach(condition=>{
+			allNeeds ++= condition
+		})
+		allNeeds.toSet
+	}
+
+	//获取单个节点需要的condition的集合
+	def getNodeNeeds(BNMatrix: DenseMatrix[Int], nodeValueSet: Set[(Int, String)]): Set[ScoreCondition] = {
+		var allMaps = mutable.Set[ScoreCondition]()
+
+		/*var arr:Array[Int] = BNMatrix.toArray
+
+		arr.foreach(a =>print(a + " "))*/
+
+		for(node <- 0 until numOfAttributes){
+			val parentsOfNode = BayesTools.getParentSet(BNMatrix,node,numOfAttributes)
+			// i是自己节点的所有取值情况集合
+			val i:mutable.Set[ScoreCondition] = nodeValueSet.filter(x=>x._1==node).aggregate(mutable.Set[ScoreCondition]())(BayesTools.joinStringPair,ScoreCondition.cartesianTwoSet)
+			// ij是自己节点的父节点的所有取值情况集合
+			val ij:mutable.Set[ScoreCondition] = nodeValueSet.filter(x=>parentsOfNode.contains(x._1)).aggregate(mutable.Set[ScoreCondition]())(BayesTools.joinStringPair,ScoreCondition.cartesianTwoSet)
+			//ijk是自己节点的取值匹配父节点取值的所有可能的取值情况集合
+			val ijk:mutable.Set[ScoreCondition] = ScoreCondition.cartesianTwoSet(i,ij)
+			allMaps = allMaps ++ ij ++ ijk
+
+
+			/*println("第一次")
+			println("node：" + node + " 的数据")
+			println("i的数据")
+			i.foreach(_.needs.foreach(p =>println(p._1 + " " + p._2)))
+			println("ij的数据")
+			ij.foreach(a =>{ println("下一个condition")
+				a.needs.foreach(p =>println(p._1 + " " + p._2))})
+			println("ijk的数据")
+			ijk.foreach(_.needs.foreach(p =>println(p._1 + " " + p._2)))
+			println("结束")*/
+		}
+		allMaps.toSet
+	}
+
+	//获取该节点的所有的父节点condition
+	def getNeeds_MIJ(BNMatrix:DenseMatrix[Int], node:Int, nodeValueSet:Set[(Int,String)]):Set[ScoreCondition] ={
+		var allMaps = mutable.Set[ScoreCondition]()
+		val parentOfNode = BayesTools.getParentSet(BNMatrix,node,this.numOfAttributes)
+		//val i:mutable.Set[ScoreCondition] = nodeValueSet.filter(x=>x._1==node).aggregate(mutable.Set[ScoreCondition]())(joinStringPair,ScoreCondition.cartesianTwoSet)
+		val ij:mutable.Set[ScoreCondition] = nodeValueSet.filter(x=>parentOfNode.contains(x._1)).aggregate(mutable.Set[ScoreCondition]())(joinStringPair,ScoreCondition.cartesianTwoSet)
+		//val ijk = cartesianTwoSet(i,ij)
+		allMaps = allMaps ++ ij// ++ ijk
+		allMaps.toSet
+	}
+	
+	//获取一个map，其中key为condition，value为这个condition在样本中的数量
+	def getMapsFromData(textfile: Array[Array[String]], allNeeds: Set[ScoreCondition]): Map[ScoreCondition, Long] = {
+		if(allNeeds.isEmpty) {
+			return Map[ScoreCondition, Long]()
+		}
+		//创建一个取值condition为key，相同condition数量为value的键值对Map，取值情况包括父节点取值condition+自身节点取值与父节点取值的所有可能即师兄论文中mijk的condition
+		val actualNeedsMap:mutable.Map[ScoreCondition, Long] = mutable.Map(allNeeds.map(condition => (condition, 0.toLong)).toSeq: _*)
+
+		//	在allNeeds中过滤出在样本中的condition数量
+		textfile.foreach(dataline=> {
+			allNeeds.filter(condition => {
+				condition.matchData(dataline)
+			}).foreach(condition => {
+				actualNeedsMap(condition) = actualNeedsMap(condition) + 1
+			})
+		})
+		actualNeedsMap
+	}
+
+	/*
+		用公式计算评分
+		dataMaps：计算的每个condition的所有元素都不在样本中的数量
+		nodeValueSet：每个节点的取值种类，如0 novisit，visit
+		q_i表示该节点的父节点的取值condition的数量
+		r_i表示该节点的取值condition数量
+		m_ijk是该节点取第k个condition且父节点取第j个condition的样本数目
+		m_ij是该节点的父节点取第j个condition的样本数目
+	 */
+	def calculate(BNMatrix:DenseMatrix[Int],dataMaps:Map[ScoreCondition,Long], nodeValueSet:Set[(Int,String)]):Double = {
+		var bicScore:Double = 0.0
+
+		for(i <- 0 until numOfAttributes){ //遍历每个节点 从i到n
+			var LL = 0.0
+
+			//找到该节点的所有父节点index集合
+			val parentSet = BayesTools.getParentSet(BNMatrix,i,numOfAttributes)
+			//把nodeValueSet滤出当前节点的键值对并拆成多个键值对，例、如<0 "novisit,visit">拆成 <0,novisit>和<0,visit>
+			val splitedNodeValueSet:Set[(Int,String)] = nodeValueSet.filter(_._1==i).flatMap(m=>{
+				var ans:mutable.Set[(Int,String)] = mutable.Set[(Int,String)]()
+				m._2.split(",").foreach(v=>{
+					ans += Tuple2(i,v)
+				})
+				ans.toSet
+			})
+
+			if(parentSet.isEmpty){ //如果没有父节点
+				val q_i = 1  //父节点condition种数
+				val r_i = splitedNodeValueSet.size //自身节点condition种数
+
+				/*	mijk = 节点i取第k个值时的样本数量
+					mij = 样本数量
+				 */
+
+				val tmp = splitedNodeValueSet.map(k=>{
+
+					val singleScoreCondition:ScoreCondition = new ScoreCondition()
+					singleScoreCondition.addKeyValue(k._1.toString,k._2)
+
+					val m_ijk = dataMaps(singleScoreCondition)
+					val m_ij:Double = numOfSamples.doubleValue()
+					if(m_ijk == 0) {
+						0
+					} else {
+						m_ijk*Math.log(m_ijk/m_ij)
+					}
+				}).sum
+				LL += tmp
+				LL -= Math.log(numOfSamples)*q_i*(r_i-1)/2 //减去参数总数
+			}
+			else{//若有父节点
+
+				//计算该节点的父节点condition种数，即q_i
+				var q_i = 1
+				parentSet.toArray.map(paNode => {
+					nodeValueSet.filter(_._1 == paNode).flatMap(_._2.split(",")).size
+				}).foreach(numOfType => q_i = q_i * numOfType)
+
+				//该节点的取值condition种数
+				val r_i = splitedNodeValueSet.size
+
+				/*	获取MIJ需要的集合，即该该节点的父节点condition取值
+					以0节点，1和2是其父节点为例，每一行是一个condition
+					   1 c 2 e
+					   1 c 2 f
+					   1 d 2 e
+					   1 d 2 f
+				 */
+				val dataMapNodeI_MIJ:Set[ScoreCondition] = this.getNeeds_MIJ(BNMatrix, i, nodeValueSet)
+
+				//遍历每一个父节点condition，从j=1到j=q_i 计算BIC
+				LL += dataMapNodeI_MIJ.flatMap(condition=>{
+
+					//m_ij = 节点i的父节点取第j个值时的样本数量
+					val m_ij:Double = dataMaps(condition)
+
+					splitedNodeValueSet.map(index_type=>{ //遍历i节点的每一种取值 从k到r_i
+
+						//将i节点的取值联合父节点的取值，得到i节点取第k个值时其父节点取第j个值的样本数量
+						val ijk = condition.tmpAddKeyValue(index_type._1.toString,index_type._2)
+						val m_ijk = dataMaps(ijk)
+
+						if(m_ijk == 0) {
+							0
+						} else {
+							m_ijk*Math.log(m_ijk/m_ij)
+						}
+					})
+				}).sum
+				LL -= Math.log(numOfSamples)*q_i*(r_i-1)/2
+			}
+			bicScore += LL
+		}
+		bicScore
+	}
+
+
+
+
 }

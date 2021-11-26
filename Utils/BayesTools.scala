@@ -1,9 +1,10 @@
 package Utils
 
+import Models.ScoreCondition
 import breeze.linalg.DenseMatrix
 
 import scala.collection.mutable
-import scala.collection.mutable.Map
+import scala.collection.mutable.{Map, Set}
 
 object BayesTools {
 
@@ -53,4 +54,44 @@ object BayesTools {
 		}
 		newMatrix
 	}
+
+	//和set对应
+	def getEdgeDirectType(denseMatrix: DenseMatrix[Int], x:Int, y:Int):Int = {
+		val xy:Int = denseMatrix(x, y)
+		val yx:Int = denseMatrix(y, x)
+		if(xy == 0 && yx == 0) {
+			0
+		} else if(xy == 1 && yx == 0) {
+			1
+		} else {
+			2
+		}
+	}
+
+
+
+	// 获得指定节点的父节点集合
+	def getParentSet(matrix:DenseMatrix[Int],child:Int,numOfAttributes:Int): Set[Int] ={
+
+		val parentSet = Set[Int]()
+		for(i <- 0 until numOfAttributes){
+			if(matrix(i,child)==1) {
+				parentSet.add(i)
+			}
+		}
+		parentSet
+	}
+
+	//把nodeValueSet(node,"val1,val2,...")转化成Set{<nodeI,val1>,<nodeI,val2>,...}
+	def joinStringPair(U:mutable.Set[ScoreCondition],nodeValue:(Int,String)): mutable.Set[ScoreCondition] ={
+		val ans:mutable.Set[ScoreCondition] = mutable.Set[ScoreCondition]()
+		val nodeValuePairs = nodeValue._2.split(",")
+		nodeValuePairs.foreach(targetValue=>{
+			var tempSc = new ScoreCondition()
+			tempSc.addKeyValue(nodeValue._1.toString,targetValue)
+			ans.add(tempSc)
+		})
+		ScoreCondition.cartesianTwoSet(U,ans)
+	}
+
 }
