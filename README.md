@@ -1,3 +1,3 @@
 # Master's experiment
-## The Experiment of Baye's Network with Genetic Algorithm on Spark Platform
+## The Experiment of Baye's Network with Single Genetic Algorithm on Spark Platform
 
