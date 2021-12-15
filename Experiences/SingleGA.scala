@@ -35,8 +35,8 @@ object SingleGA{
 
 class SingleGA extends java.io.Serializable{
 
-	var sampleName = "cancer"
-	var inputPath = "/Users/caiyiming/SingleGA/Samples/cancer_50000.csv"
+	var sampleName = "asia"
+	var inputPath = "/Users/caiyiming/SingleGA/Samples/asia50000.csv"
 
 	var finalBNStructure:BNStructure = _
 

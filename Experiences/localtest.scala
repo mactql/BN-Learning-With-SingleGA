@@ -13,7 +13,7 @@ import redis.clients.jedis._
 
 import scala.collection._
 import breeze.linalg._
-import org.apache.spark.SparkConf
+import org.apache.spark.{SparkConf, SparkContext}
 
 
 
@@ -33,10 +33,10 @@ object localtest{
 	}
 }
 
-class localtest extends java.io.Serializable{
+class localtest extends java.io.Serializable {
 
-	var sampleName = "cancer"
-	var inputPath = "/Users/caiyiming/SingleGA/Samples/cancer_50000.csv"
+	var sampleName = "earthquake"
+	var inputPath = "/Users/caiyiming/Documents/Sparkproject/Samples/earthquake50000.csv"
 
 	var finalBNStructure:BNStructure = _
 
@@ -47,13 +47,16 @@ class localtest extends java.io.Serializable{
 
 
 		//创建sparkContext
-		val sc = new SparkSession.Builder().appName("ga").master("local").getOrCreate().sparkContext
+		val sc = new SparkSession.Builder().master("local").getOrCreate().sparkContext
 
 		//读取输入数据，最小分区数为48(师兄设置的),用collect将RDD转化为数组，即样本数据的二维数组
 		val textfile:Array[Array[String]] = sc.textFile(inputPath,48).cache().map(_.split(",")).collect()
 
 		//获取样本数据的节点数目
 		val numOfAttributes = textfile(0).length
+
+		//记录算法开始时间
+		var startTime = System.currentTimeMillis()
 
 		/*
 			将每个节点的取值种类用,连成string作为Value，用index作为key，组成set集合
@@ -67,7 +70,6 @@ class localtest extends java.io.Serializable{
 
 		//初始化种群，n个变量的BN结构可以用n*n的邻接矩阵表示，aij=1则表示i是j的父节点，i指向j
 		val BNMatrixPopulation:Array[DenseMatrix[Int]] = initPopulationAllWithRemoveCycle(numOfPopulation * 2, numOfAttributes, sc)
-
 
 		//对BN结构种群进行评分计算
 		val score:BICScore = new BICScore(numOfAttributes,textfile)
@@ -103,17 +105,97 @@ class localtest extends java.io.Serializable{
 				sameTimesScore = curBestBN.score
 			}else
 				countBestSameTimes += 1
+			countIterNum += 1
 		}
+
+		//记录算法执行的时间
+		val executeTime:Double = (System.currentTimeMillis()-startTime)/1000.0
 
 		finalBNStructure = curBestBN
 		//finalBNStructure.printBNStructure()
 
-		val f1Score:Double = EndUtils.evaluateAccuracyOfTruePositive(sampleName,finalBNStructure.structure,sc)
-		println()
-		println( " f1score： " + f1Score)
+		val f1Score:Double = evaluateAccuracyOfTruePositive(sampleName,finalBNStructure.structure,sc)
+		println("*****************************************************")
+		println("F1score: " + f1Score)
+		println("Execute time: " + executeTime + "s")
+		println("Stop iter: " + countIterNum)
+		println("*****************************************************")
 		broadNodeValue.destroy()
 
 
 	}
+	 def evaluateAccuracyOfTruePositive(stdModelName:String, curModel:DenseMatrix[Int],sc:SparkContext): Double = {
 
+		//val stdModel:Array[Array[Int]] = CSVFileUtils.readStructureFromCsv(stdModelName)
+		val stdModel:Array[Array[Int]] = sc.textFile("/Users/caiyiming/Documents/Sparkproject/Models/CSV/"+stdModelName+".csv").map(line=>{
+			var temp:Array[String] = line.split(",")
+			temp.map(t=>{
+				if(t.equals("1"))
+					1;
+				else 0;
+			})
+		}).collect()
+
+		val numOfAttribute = stdModel.length
+		var totalPositiveInBench = 0
+		var totalNegativeInBench = 0
+		for (i <- 0 until numOfAttribute) {
+			for (j <- i until numOfAttribute) {
+				//只有没边的时候才会相等
+				if (stdModel(i)(j) != stdModel(j)(i)) {
+					totalPositiveInBench = totalPositiveInBench + 1
+				} else {
+					totalNegativeInBench = totalNegativeInBench + 1
+				}
+			}
+		}
+		var F1Score:Double = 0
+		var sensitivity:Double = 0
+		var specificity:Double = 0
+		var matchPositive:Int = 0
+		var matchNegative:Int = 0
+		var totalPositiveInPredict:Int = 0
+		var totalNegativeInPredict:Int = 0
+		for (i <- 0 until numOfAttribute) {
+			for (j <- i until numOfAttribute) {
+				val ij = curModel(i, j)
+				val ji = curModel(j, i)
+				if (ij != ji) {
+					totalPositiveInPredict = totalPositiveInPredict + 1
+				} else {
+					totalNegativeInPredict = totalNegativeInPredict + 1
+				}
+
+				if (ij == stdModel(i)(j) && ji == stdModel(j)(i)) {
+					if (ij == 0 && ji == 0) {
+						matchNegative = matchNegative + 1
+					} else {
+						matchPositive = matchPositive + 1
+					}
+				}
+			}
+		}
+		if (totalPositiveInBench == 0) {
+			sensitivity = 1.0
+		} else {
+			sensitivity = 1.0 * matchPositive / totalPositiveInBench
+		}
+		var precision:Double = 0
+		if (totalPositiveInPredict == 0) {
+			precision = 1
+		} else {
+			precision = 1.0 * matchPositive / totalPositiveInPredict
+		}
+		if (totalNegativeInBench == 0) {
+			specificity = 1
+		} else {
+			specificity = 1.0 * matchNegative / totalNegativeInBench
+		}
+		if (precision+sensitivity == 0) {
+			F1Score = 0
+		} else {
+			F1Score = 1.0 * 2 * precision * sensitivity / (precision+sensitivity)
+		}
+		F1Score
+	}
 }
