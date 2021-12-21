@@ -1,21 +1,15 @@
 package Experiences
 
-import Models.BNStructure
+
 import Models.ScoreModels.BICScore
 import Experiences.SingleGA._
 import Models.BNStructure
-import Models.ScoreModels._
-import Operations.GAOperations
 import Utils._
 import Operations.GAOperations._
 import org.apache.spark.sql._
-import redis.clients.jedis._
-
 import scala.collection._
 import breeze.linalg._
 import org.apache.spark.SparkConf
-
-import scala.util.control.Breaks.break
 
 object SingleGA{
 
@@ -41,7 +35,7 @@ class SingleGA extends java.io.Serializable{
 	var finalBNStructure:BNStructure = _
 
 	def run(): Unit = {
-		var tournamentSize:Int = 2
+		val tournamentSize:Int = 2
 //		val scoreJedis:Jedis = new Jedis(RedisConfig.redisHosts, RedisConfig.redisPort)
 //		val scoreJedisPipeline:Pipeline = scoreJedis.pipelined()
 
@@ -58,7 +52,7 @@ class SingleGA extends java.io.Serializable{
 		val numOfAttributes = textfile(0).length
 
 		//记录算法开始时间
-		var startTime = System.currentTimeMillis()
+		val startTime = System.currentTimeMillis()
 
 		/*
 			将每个节点的取值种类用,连成string作为Value，用index作为key，组成set集合
@@ -66,9 +60,9 @@ class SingleGA extends java.io.Serializable{
 			1 Absent,Present
 			...
 		 */
-		val nodeValueSet:Set[(Int,String)] = BayesTools.getNodeValueMap(textfile).toSet
+		val valueTypeSet:Set[(Int,String)] = BayesTools.getNodeValueMap(textfile).toSet
 		//广播节点取值set
-		val broadNodeValue = sc.broadcast(nodeValueSet)
+		val broadValueTpye = sc.broadcast(valueTypeSet)
 
 		//初始化种群，n个变量的BN结构可以用n*n的邻接矩阵表示，aij=1则表示i是j的父节点，i指向j
 		val BNMatrixPopulation:Array[DenseMatrix[Int]] = initPopulationAllWithRemoveCycle(numOfPopulation * 2, numOfAttributes, sc)
@@ -76,7 +70,7 @@ class SingleGA extends java.io.Serializable{
 
 		//对BN结构种群进行评分计算
 		val score:BICScore = new BICScore(numOfAttributes,textfile)
-		var BNStructurePopulation:Array[BNStructure] = score.calculateScore(BNMatrixPopulation,textfile,broadNodeValue.value)
+		var BNStructurePopulation:Array[BNStructure] = score.calculateScore(BNMatrixPopulation,textfile,broadValueTpye.value)
 
 		//获取当前种群中的精英个体
 		var curBestBN = getEliteIndividual(BNStructurePopulation)
@@ -90,6 +84,7 @@ class SingleGA extends java.io.Serializable{
 
 		var countIterNum = 0
 		while(countIterNum < numOfMaxInterator && countBestSameTimes < 30){
+			println("第"+countIterNum+"代")
 			//锦标赛选择算子得到100条染色体
 			BNStructurePopulation = tournamentSelection(BNStructurePopulation,tournamentSize,numOfPopulation,sc)
 			//对这100条染色体均匀交叉，得到100条均匀交叉后的染色体与锦标赛得到的100条混合成200条染色体的种群
@@ -97,7 +92,7 @@ class SingleGA extends java.io.Serializable{
 			//对200条染色体进行单点突变
 			BNStructurePopulation = singlePointMutationAll(BNStructurePopulation,numOfAttributes)
 			//BIC评分
-			BNStructurePopulation = score.calculateScore(BNStructurePopulation.map(_.structure),textfile,broadNodeValue.value)
+			BNStructurePopulation = score.calculateScore(BNStructurePopulation.map(_.structure),textfile,broadValueTpye.value)
 			//获取精英个体
 			curBestBN = getEliteIndividual(BNStructurePopulation)
 			BNStructurePopulation = replaceLowestWithElite(BNStructurePopulation,curBestBN)
@@ -122,10 +117,11 @@ class SingleGA extends java.io.Serializable{
 
 		println("*****************************************************")
 		println("F1score: " + f1Score)
+		println("BICScore:" + finalBNStructure.score)
 		println("Execute time: " + executeTime + "s")
 		println("Stop iter: " + countIterNum)
 		println("*****************************************************")
-		broadNodeValue.destroy()
+		broadValueTpye.destroy()
 
 
 	}

@@ -28,6 +28,10 @@ object ScoreCondition {
 
 class ScoreCondition extends java.io.Serializable{
 
+	/*
+		needs是一个map，其中每个映射的key是节点index，value是当前节点的取值
+		如 ("0","visit")
+	 */
 	var needs:mutable.Map[String,String] = mutable.Map[String,String]()
 
 	def addKeyValue(key:String,value:String):Unit = {

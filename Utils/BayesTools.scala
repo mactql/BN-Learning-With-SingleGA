@@ -2,6 +2,8 @@ package Utils
 
 import Models.ScoreCondition
 import breeze.linalg.DenseMatrix
+import org.apache.spark.rdd.RDD
+import org.apache.spark.storage.StorageLevel
 
 import scala.collection.mutable
 import scala.collection.mutable.{Map, Set}
@@ -34,6 +36,17 @@ object BayesTools {
 		})
 		ans
 	}
+
+	/*
+		将每个节点的取值种类用,连成string作为Value，用index作为key，组成set集合
+		0 NoVisit,Visit
+		1 Absent,Present
+		...
+	 */
+	def getNodeValueMap(tf:RDD[Array[String]]):RDD[(Int,String)] = {
+		tf.flatMap(_.zipWithIndex).distinct().map(z=>(z._2,z._1)).reduceByKey((x, y) => x+","+y).sortByKey().persist(StorageLevel.MEMORY_ONLY)
+	}
+
 
 	/*
 		设置BN结构矩阵的边的方向，即节点是否是另一个节点的父亲
