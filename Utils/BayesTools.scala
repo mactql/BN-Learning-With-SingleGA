@@ -50,8 +50,9 @@ object BayesTools {
 
 	/*
 		设置BN结构矩阵的边的方向，即节点是否是另一个节点的父亲
-		edgeType=0表示aij=1，即i是j的父节点，i指向j
-		edgeType=1表示aji=1，即j是i的父节点，j指向i
+		edgeType=0表示两节点没有联系
+		edgeType=1表示aij=1，即i是j的父节点，i指向j
+		edgeType=2表示aji=1，即j是i的父节点，j指向i
 	 */
 	def setEdgeDirectType(denseMatrix: DenseMatrix[Int], x:Int, y:Int, edgeType:Int):DenseMatrix[Int] = {
 		val newMatrix:DenseMatrix[Int] = denseMatrix.copy

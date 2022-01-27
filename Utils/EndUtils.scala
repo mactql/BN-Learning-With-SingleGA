@@ -15,7 +15,7 @@ object EndUtils {
 	def evaluateAccuracyOfTruePositive(stdModelName:String, curModel:DenseMatrix[Int],sc:SparkContext): Double = {
 
 		//val stdModel:Array[Array[Int]] = CSVFileUtils.readStructureFromCsv(stdModelName)
-		val stdModel:Array[Array[Int]] = sc.textFile("/Users/caiyiming/SingleGA/Models/CSV/"+stdModelName+".csv").map(line=>{
+		val stdModel:Array[Array[Int]] = sc.textFile("/Users/caiyiming/BNDataSet/stdModels/"+stdModelName+".csv").map(line=>{
 			var temp:Array[String] = line.split(",")
 			temp.map(t=>{
 				if(t.equals("1"))

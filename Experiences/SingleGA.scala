@@ -29,8 +29,8 @@ object SingleGA{
 
 class SingleGA extends java.io.Serializable{
 
-	var sampleName = "asia"
-	var inputPath = "/Users/caiyiming/SingleGA/Samples/asia50000.csv"
+	var sampleName = "survey"
+	var inputPath = "/Users/caiyiming/SingleGA/Samples/survey50000.csv"
 
 	var finalBNStructure:BNStructure = _
 
@@ -84,7 +84,7 @@ class SingleGA extends java.io.Serializable{
 
 		var countIterNum = 0
 		while(countIterNum < numOfMaxInterator && countBestSameTimes < 30){
-			println("第"+countIterNum+"代")
+			println("第"+countIterNum+"代：" + curBestBN.score)
 			//锦标赛选择算子得到100条染色体
 			BNStructurePopulation = tournamentSelection(BNStructurePopulation,tournamentSize,numOfPopulation,sc)
 			//对这100条染色体均匀交叉，得到100条均匀交叉后的染色体与锦标赛得到的100条混合成200条染色体的种群

@@ -79,7 +79,6 @@ object CycleUtils {
 		//得到最优顶点序列seq
 		val seq = seq1 ++ seq2
 
-
 		// 删除后向边，即序列左反馈弧
 		for(jI <- 2 until seq.size) {
 			val j = seq(jI)

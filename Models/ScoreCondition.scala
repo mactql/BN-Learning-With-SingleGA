@@ -14,8 +14,8 @@ object ScoreCondition {
 			U.foreach(u => {
 				X.foreach(x => {
 					val tempCondition = new ScoreCondition()
-					tempCondition.needs ++= u.needs
-					tempCondition.needs ++= x.needs
+					tempCondition.conditions ++= u.conditions
+					tempCondition.conditions ++= x.conditions
 					ans.add(tempCondition)
 				})
 			})
@@ -29,35 +29,37 @@ object ScoreCondition {
 class ScoreCondition extends java.io.Serializable{
 
 	/*
-		needs是一个map，其中每个映射的key是节点index，value是当前节点的取值
+		conditions是一个map，其中每个映射的key是节点index，value是当前节点的取值
 		如 ("0","visit")
 	 */
-	var needs:mutable.Map[String,String] = mutable.Map[String,String]()
+	var conditions:mutable.Map[String,String] = mutable.Map[String,String]()
 
 	def addKeyValue(key:String,value:String):Unit = {
-		needs.put(key,value)
+		conditions.put(key,value)
 	}
 
 	def tmpAddKeyValue(key:String,value:String):ScoreCondition = {
 		val tmpCondition = new ScoreCondition()
-		needs.foreach(kv=>tmpCondition.addKeyValue(kv._1,kv._2))
+		conditions.foreach(kv=>tmpCondition.addKeyValue(kv._1,kv._2))
 		tmpCondition.addKeyValue(key,value)
 		tmpCondition
 	}
 
 	//用来和一行样本数据的condition进行match，如果和这行数据全部相同，就true
 	def matchData(sample:Array[String]):Boolean = {
-		this.needs.foreach(kv=>{
+		this.conditions.foreach(kv=>{
 			if(! sample(kv._1.toInt).equals(kv._2)) return false
 		})
 		true
 	}
 
+	def getConditions:Map[String,String] = {conditions.toMap}
+
 	override def toString: String = {
 		var mapStringfy = new StringBuilder
 		val arrayIndex:util.ArrayList[Int] = new util.ArrayList[Int]()
 		val arrayValue:util.ArrayList[String] = new util.ArrayList[String]()
-		needs.foreach(kv=>{
+		conditions.foreach(kv=>{
 			val nodeI:Int = kv._1.toInt
 			val nodeIValue:String = kv._2
 			if (arrayIndex.isEmpty){
@@ -83,22 +85,21 @@ class ScoreCondition extends java.io.Serializable{
 		if(super.equals(obj)) return true
 		if(obj==null || getClass()!=obj.getClass()) return false
 		val scoreCondition:ScoreCondition = obj.asInstanceOf[ScoreCondition]
-		if(scoreCondition.needs.size != this.needs.size) return false
+		if(scoreCondition.conditions.size != this.conditions.size) return false
 		else{
-			this.needs.foreach(need=>{
-				if(!scoreCondition.needs.contains(need._1) || !scoreCondition.needs(need._1).equals(need._2)) return false
+			this.conditions.foreach(need=>{
+				if(!scoreCondition.conditions.contains(need._1) || !scoreCondition.conditions(need._1).equals(need._2)) return false
 			})
-			scoreCondition.needs.foreach(need => {
-				if(!this.needs.contains(need._1) || !this.needs(need._1).equals(need._2)) return false
+			scoreCondition.conditions.foreach(need => {
+				if(!this.conditions.contains(need._1) || !this.conditions(need._1).equals(need._2)) return false
 			})
 			true
 		}
 	}
 
-	def getNeeds:Map[String,String] = {needs.toMap}
 
 	override def hashCode(): Int = {
-		getNeeds.map(kv=>{
+		getConditions.map(kv=>{
 			kv.hashCode()
 		}).sum
 	}

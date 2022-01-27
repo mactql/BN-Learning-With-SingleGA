@@ -1,10 +1,14 @@
 package Models.ScoreModels
 
+import Config.RedisConfig
 import Models.{BNStructure, ScoreCondition}
 import Utils.BayesTools.joinStringPair
 import Utils.BayesTools
 import breeze.linalg.DenseMatrix
+import org.apache.spark.SparkContext
 import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.rdd.RDD
+import redis.clients.jedis.{Jedis, Pipeline}
 
 import scala.collection.{Map, Set, mutable}
 
@@ -22,18 +26,25 @@ class BICScore extends java.io.Serializable{
 		this.numOfSamples = dataSet.length
 	}
 
+	def this(initNumOfAttr:Int, dataSet:RDD[Array[String]]) = {
+		this()
+		//		BICScore.eachIterCountCalNumFile.initCSV()
+		numOfAttributes = initNumOfAttr
+		this.numOfSamples = dataSet.count()
+	}
+
 	//构造计算需要的集合及调用BIC评分计算函数完成种群的评分
 	def calculateScore(population: Array[DenseMatrix[Int]], textfile:Array[Array[String]],nodeValueSet:Set[(Int,String)]): Array[BNStructure] = {
 
 		//获取每个节点的ij和ijk的condition，具体解释看函数内部
-		val allneeds:Set[ScoreCondition] = this.getAllNeeds(population,nodeValueSet)
+		val allConditions:Set[ScoreCondition] = this.getAllNeeds(population,nodeValueSet)
 //		val fullNeedCount:Array[String] = new Array[String](2)
 //		fullNeedCount(0) = "full need count
 //		fullNeedCount(1) = needs.size.toString
 //		CSVForIteratorExp.writeIntoCSV(BICScore.eachIterCountCalNumFile, fullNeedCount)
 
 		//对每一种condition计算在样本中的数量
-		val dataMaps:Map[ScoreCondition, Long] = this.getMapsFromData(textfile, allneeds)
+		val numOfConditionMap:Map[ScoreCondition, Long] = this.getMapsFromData(textfile, allConditions)
 
 		/*dataMaps.foreach(a =>{
 			a._1.needs.foreach(b => print(b._1 + " " + b._2))
@@ -42,9 +53,51 @@ class BICScore extends java.io.Serializable{
 
 		//用每个BN矩阵+conditionmap+每个节点的取值种类计算BIC评分并构建BN结构
 		population.map(BNMatrix=>{
-			new BNStructure(BNMatrix, calculate(BNMatrix, dataMaps, nodeValueSet))
+			new BNStructure(BNMatrix, calculate(BNMatrix, numOfConditionMap, nodeValueSet))
 		})
 	}
+
+
+	//调用redis中的数据对种群进行评分计算
+	def calculateScoreParallelWithRedis(population: RDD[BNStructure],textfile:RDD[Array[String]],broadValueTpye:Broadcast[Set[(Int,String)]],sc:SparkContext,ScoreJedisPipeline:Pipeline):Array[BNStructure] = {
+		//获取每个节点的ij和ijk的condition，具体解释看函数内部
+		val allConditions:Set[ScoreCondition] = this.getAllNeeds(population.map(_.structure).collect(),broadValueTpye.value)
+
+		//从pipeline中取出所有取值情况的在D中的数量，若不在redis中则返回-1
+		val dataMap:mutable.Map[ScoreCondition, Long] = getAllConditionsMap(allConditions, ScoreJedisPipeline)
+
+		//得到不在redis中仍然需要计算的取值情况
+		val stillNeeds:Set[ScoreCondition] = dataMap.filter(condition => condition._2 == -1).keys.toSet
+
+
+
+		//得到仍然需要计算的取值情况与其D中数量的映射
+		val stillNeedsMap:Map[ScoreCondition,Long] = getStillMapsFromDataWithRedis(textfile,stillNeeds,sc,ScoreJedisPipeline)
+
+		//将仍需要计算的映射和已计算的映射合并成所有情况的映射关系
+		stillNeedsMap.foreach(eachMap=>{
+			dataMap(eachMap._1) = eachMap._2
+		})
+
+
+
+
+		//广播所有情况与D中数量的映射关系
+		val broadDataMap:Broadcast[Map[ScoreCondition,Long]] = sc.broadcast(dataMap.toMap)
+
+		//对每个BN结构进行评分计算
+		var finalBNPopulations:Array[BNStructure] = population.mapPartitions(iter=>{
+			val tempBNstructureSet:mutable.Set[BNStructure] = mutable.Set[BNStructure]()
+			iter.foreach(eachBN=>{
+				tempBNstructureSet.add(new BNStructure(eachBN.structure,calculate(eachBN.structure,broadDataMap.value,broadValueTpye.value)))
+			})
+			tempBNstructureSet.iterator
+		}).collect()
+		broadDataMap.destroy()
+		finalBNPopulations
+	}
+
+
 
 	/*
 		获取需要的condition的集合
@@ -83,11 +136,11 @@ class BICScore extends java.io.Serializable{
 			/*println("第一次")
 			println("node：" + node + " 的数据")
 			println("i的数据")
-			i.foreach(_.needs.foreach(p =>println(p._1 + " " + p._2)))
-			println("ij的数据")
+			i.foreach(_.needs.foreach(p =>println(p._1 + " " + p._2)))*/
+			/*println("ij的数据")
 			ij.foreach(a =>{ println("下一个condition")
-				a.needs.foreach(p =>println(p._1 + " " + p._2))})
-			println("ijk的数据")
+				a.conditions.foreach(p =>println(p._1 + " " + p._2))})*/
+			/*println("ijk的数据")
 			ijk.foreach(_.needs.foreach(p =>println(p._1 + " " + p._2)))
 			println("结束")*/
 		}
@@ -123,6 +176,71 @@ class BICScore extends java.io.Serializable{
 		})
 		actualNeedsMap
 	}
+
+	//获取仍然需要计算的数据，其中key为condition，value为这个condition在样本中的数量,并用redis存储数据复用
+	def getStillMapsFromDataWithRedis(textfile: RDD[Array[String]], stillNeeds: Set[ScoreCondition], sc:SparkContext,scoreJedisPipeline:Pipeline): Map[ScoreCondition, Long] = {
+		if(stillNeeds.isEmpty) {
+			return Map[ScoreCondition, Long]()
+		}
+
+		//计算出仍然需要计算的取值情况的节点集合 如[1,2,3]，[1,3,4],[1,2,3,4] 并广播
+		val stillNeedsKeys:Set[Set[String]] = stillNeeds.map(condition => {
+			condition.conditions.keySet
+		})
+
+		val broadStillNeedsKeys = sc.broadcast(stillNeedsKeys)
+
+		/*
+			先把stillNeeds的所有节点组合统计出来，组成Set[Set[String]]  ，如[1,2,3],[1,2,3,4],[2,3,4]
+			记为stillNeedsKeys并广播。
+			然后直接用统计出来的节点组合在每行数据中取出，组合成取值情况，若在map中则+1
+		 */
+
+		val stillMapsRDD:RDD[(ScoreCondition,Long)] = textfile.mapPartitions(iter=>{
+			var tempMap:mutable.Map[ScoreCondition,Long] = mutable.Map[ScoreCondition,Long]()
+			iter.foreach(sampleLine=>{
+				broadStillNeedsKeys.value.foreach(condition => {
+					val curScoreCondition = new ScoreCondition()
+					condition.foreach(indexStr => curScoreCondition.addKeyValue(indexStr,sampleLine(indexStr.toInt)))
+					if(tempMap.contains(curScoreCondition)) tempMap.put(curScoreCondition,tempMap(curScoreCondition)+1)
+					else tempMap += (curScoreCondition->1)
+				})
+			})
+			tempMap.toIterator
+		}).reduceByKey(_+_)
+
+		/*
+			将数据保存在redis中
+		 */
+		stillMapsRDD.mapPartitions(iter=>{
+			val savingJedis:Jedis = new Jedis(RedisConfig.redisHosts, RedisConfig.redisPort)
+			val savingJedisPipeline:Pipeline = savingJedis.pipelined()
+			iter.foreach(conditionMap=>{
+				val conditionStr:String = conditionMap._1.toString
+				val countStr:String = conditionMap._2.toString
+				savingJedisPipeline.setnx(conditionStr, countStr)
+			})
+			savingJedisPipeline.sync()
+			savingJedis.close()
+			Set[String]().iterator
+		}).collect()
+
+		stillNeeds.foreach(condition=>{
+			scoreJedisPipeline.setnx(condition.toString,"0")
+		})
+		scoreJedisPipeline.sync()
+
+		val stillNeedsArr:Array[ScoreCondition] = stillNeeds.toArray
+		stillNeedsArr.foreach(condition=>{
+			scoreJedisPipeline.get(condition.toString)
+		})
+
+		val stillNeedsCount:Array[Long] = scoreJedisPipeline.syncAndReturnAll().toArray.map(_.toString.toLong)
+		broadStillNeedsKeys.destroy()
+		stillNeedsArr.zip(stillNeedsCount).toMap
+	}
+
+
 
 	/*
 		用公式计算评分
@@ -220,7 +338,18 @@ class BICScore extends java.io.Serializable{
 		bicScore
 	}
 
+	//从pipeline中取出所有取值情况的在D中的数量
+	def getAllConditionsMap(allConditions:Set[ScoreCondition], scoreJedisPipeline:Pipeline):mutable.Map[ScoreCondition, Long] = {
 
+		val allConditionsArray:Array[ScoreCondition] = allConditions.toArray
+		allConditionsArray.foreach(need => {
+			scoreJedisPipeline.get(need.toString)
+		})
 
+		mutable.Map(allConditionsArray.zip(scoreJedisPipeline.syncAndReturnAll().toArray().map(fetchedValue => {
+			if(fetchedValue == null) -1
+			else fetchedValue.toString.toLong
+		})).toMap.toSeq: _*)
+	}
 
 }

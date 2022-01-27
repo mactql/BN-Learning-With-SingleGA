@@ -24,7 +24,7 @@ object BNStructure{
 
 }
 
-class BNStructure {
+class BNStructure extends java.io.Serializable{
 
 	var structure:DenseMatrix[Int] = DenseMatrix.zeros(1,1)
 
