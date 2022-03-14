@@ -57,9 +57,9 @@ object GAOperations {
 
 	
 
-	//获取种群中评分最高的个体，即获取精英个体
-	def getEliteIndividual(populations:Array[BNStructure]):BNStructure = {
-		var curBestBN = new BNStructure()
+	//获取种群中评分最高的个体，更新历史最优个体
+	def getEliteIndividual(populations:Array[BNStructure],bestBN:BNStructure):BNStructure = {
+		var curBestBN = new BNStructure(bestBN.structure.copy,bestBN.score)
 		populations.foreach(individual =>{
 			if(individual.score > curBestBN.score){
 				curBestBN.structure = individual.structure.copy
@@ -166,6 +166,7 @@ object GAOperations {
 	private def singlePointMutation(base: DenseMatrix[Int],numOfAttribute:Int):DenseMatrix[Int] = {
 		var next:DenseMatrix[Int] = base.copy
 		val rate:Double = 1.0 / (numOfAttribute * (numOfAttribute - 1) / 2)
+
 		//对每一条边进行突变
 		(0 until numOfAttribute).foreach(x => {
 			((x+1) until numOfAttribute).foreach(y => {

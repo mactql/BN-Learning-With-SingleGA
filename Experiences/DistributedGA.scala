@@ -2,7 +2,6 @@ package Experiences
 
 import Config.RedisConfig
 import Experiences.DistributedGA._
-import Experiences.SingleGA.SPARK_JARS_HOME
 import Models.BNStructure
 import Models.ScoreModels._
 import Models.SuperStructure.getSSWithMutualInfo
@@ -23,27 +22,23 @@ object DistributedGA {
 
 	var datasetName = ""
 
-	var inputRootPath = "/Users/caiyiming/BNDataSet/Samples/"
+	var inputRootPath = "/Users/caiyiming/BNDataSet/mySamples/"
 
 	var inputPath = ""
 
-	var numOfSamples:Long = 0
-
 	var maxParent = 4
+
+	var numOfAttributes:Int = 0
 
 	var numOfPopulation = 100
 
 	var numOfMaxInterator = 200
 
-	var numOfAttributes:Int = 0
-
-	var numOfMaxIterator:Int = 200
-
 	var crossoverRate:Double = 0.5
 
 	var mutationRate:Double = 0
 
-	var SPARK_JARS_HOME = "/usr/hdp/3.1.0.0-78/spark2/jars/"
+	var numOfSamples:Long = 0
 
 	def run(): Unit = {
 		print("模型名称：")
@@ -66,7 +61,7 @@ class DistributedGA extends java.io.Serializable{
 	var countIterNum = 0
 	var finalBNStructure:BNStructure = _
 
-	var curBestBN = new BNStructure()
+	var SPARK_JARS_HOME = "/usr/hdp/3.1.0.0-78/spark2/jars/"
 
 	def run(): Unit ={
 
@@ -84,8 +79,14 @@ class DistributedGA extends java.io.Serializable{
 		val textfile:RDD[Array[String]] = sc.textFile(inputPath,48).cache().map(_.split(","))
 
 		//获取样本数据的节点数目和样本数量
-		numOfAttributes = textfile.take(1)(0).length
+		val copyNumOfAttributes = textfile.take(1)(0).length
+		numOfAttributes = copyNumOfAttributes
 		numOfSamples = textfile.count()
+
+		//设置当前最优结构和BIC评分对象
+		var curBestBN:BNStructure = new BNStructure()
+		val score:BICScore = new BICScore(numOfAttributes,textfile)
+
 
 		//记录算法开始时间
 		val startTime = System.currentTimeMillis()
@@ -104,24 +105,23 @@ class DistributedGA extends java.io.Serializable{
 		/*
 			计算互信息矩阵
 		 */
-		val mutualInfoMatrix = MutualInformationUtils.getMutualInfoMatrix(textfile,numOfAttributes,valueTypeSet,scoreJedisPipeline,sc,numOfSamples)
+		val mutualInfoMatrix = MutualInformationUtils.getMutualInfoMatrix(textfile,copyNumOfAttributes,broadValueTpye.value,scoreJedisPipeline,sc,score.numOfSamples)
 
 		//通过互信息矩阵构造超结构
-		val SS = getSSWithMutualInfo(mutualInfoMatrix,numOfAttributes)
+		val SS = getSSWithMutualInfo(mutualInfoMatrix,copyNumOfAttributes)
 
 		//广播超结构
 		val broadSS = sc.broadcast(SS)
 
 		//通过超结构初始化BN结构种群,当前种群数量为numOfPopulation*2
-		val BNMatrixPopulation:RDD[DenseMatrix[Int]] = initPopulationAllWithRemoveCycleAndSS(numOfPopulation * 2,numOfAttributes,sc,broadSS)
+		val BNMatrixPopulation:RDD[DenseMatrix[Int]] = initPopulationAllWithRemoveCycleAndSS(numOfPopulation * 2,copyNumOfAttributes,sc,broadSS)
 		var BNStructurePopulationRDD:RDD[BNStructure] = BNMatrixPopulation.map(m=> new BNStructure(m)).cache()
 
 		//对BN结构种群进行评分计算
-		val score:BICScore = new BICScore(numOfAttributes,textfile)
 		var BNStructurePopulationArray = score.calculateScoreParallelWithRedis(BNStructurePopulationRDD,textfile,broadValueTpye,sc,scoreJedisPipeline)
 
 		//求出当前的最优个体
-		curBestBN = getEliteIndividual(BNStructurePopulationArray)
+		curBestBN = getEliteIndividual(BNStructurePopulationArray,curBestBN)
 
 		//开始迭代
 		while(countIterNum < numOfMaxInterator && countBestSameTimes < 30){
@@ -135,25 +135,28 @@ class DistributedGA extends java.io.Serializable{
 			//进行分布式锦标赛选择与交叉算子
 			val crossoveredPopulationRDD:RDD[BNStructure] = tournamentSelectionAndUniformCrossover(broadPopulation,tournamentSize,numOfPopulation,sc)
 
-			//进行分布式突变算子，基于SS单点突变，若不在SS中，则不变易
+			//进行分布式突变算子，基于SS单点突变，若不在SS中，则不变异
 			val mutationedPopulationRDD:RDD[BNStructure] = crossoveredPopulationRDD.map(eachBN =>{
-				new BNStructure(singlePointMutationWithSS(eachBN.structure,broadSS,numOfAttributes))
+				new BNStructure(singlePointMutationWithSS(eachBN.structure,broadSS,copyNumOfAttributes))
 			}).cache()
 
 			//评分计算
 			val scoredBNPopulation = score.calculateScoreParallelWithRedis(mutationedPopulationRDD,textfile,broadValueTpye,sc,scoreJedisPipeline)
 
 			//精英替换
-			curBestBN = getEliteIndividual(scoredBNPopulation)
+			curBestBN = getEliteIndividual(scoredBNPopulation,curBestBN)
 			BNStructurePopulationArray = replaceLowestWithElite(scoredBNPopulation,curBestBN)
+
 			broadPopulation.unpersist()
 
 			//判断迭代是否已经无法更优，若迭代已经连续30次相同的精英个体说明已经收敛
 			if(curBestBN.score != sameTimesScore){
-				countBestSameTimes = 0
 				sameTimesScore = curBestBN.score
+				countBestSameTimes = 0
 			}else
 				countBestSameTimes += 1
+
+
 			countIterNum += 1
 		}
 
@@ -174,6 +177,7 @@ class DistributedGA extends java.io.Serializable{
 		println("*****************************************************")
 		broadValueTpye.destroy()
 		broadSS.destroy()
+
 		scoreJedis.flushAll()
 		scoreJedis.close()
 

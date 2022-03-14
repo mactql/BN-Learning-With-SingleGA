@@ -42,9 +42,10 @@ object BayesTools {
 		0 NoVisit,Visit
 		1 Absent,Present
 		...
+		实际上就是对数据集节点进行标号，并去重整理得到节点与取值的映射，多种取值用,隔开
 	 */
 	def getNodeValueMap(tf:RDD[Array[String]]):RDD[(Int,String)] = {
-		tf.flatMap(_.zipWithIndex).distinct().map(z=>(z._2,z._1)).reduceByKey((x, y) => x+","+y).sortByKey().persist(StorageLevel.MEMORY_ONLY)
+		tf.flatMap(_.zipWithIndex).distinct().map(z=>(z._2,z._1)).reduceByKey((x, y) => x+","+y).sortByKey().cache()
 	}
 
 

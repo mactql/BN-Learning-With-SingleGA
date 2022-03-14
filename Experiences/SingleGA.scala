@@ -7,11 +7,22 @@ import Models.BNStructure
 import Utils._
 import Operations.GAOperations._
 import org.apache.spark.sql._
+
 import scala.collection._
 import breeze.linalg._
 import org.apache.spark.SparkConf
 
+import scala.io.StdIn
+
 object SingleGA{
+
+	var sampleName = ""
+
+	var datasetName = ""
+
+	var inputRootPath = "/Users/caiyiming/BNDataSet/mySamples/"
+
+	var inputPath = ""
 
 	var maxParent = 4
 
@@ -22,6 +33,12 @@ object SingleGA{
 	var SPARK_JARS_HOME = "/usr/hdp/3.1.0.0-78/spark2/jars/"
 
 	def run(): Unit = {
+
+		print("模型名称：")
+		sampleName = StdIn.readLine()
+		print("数据集名称：")
+		datasetName = StdIn.readLine()
+		inputPath = inputRootPath + datasetName + ".csv"
 		val ga: SingleGA = new SingleGA()
 		ga.run()
 	}
@@ -29,8 +46,8 @@ object SingleGA{
 
 class SingleGA extends java.io.Serializable{
 
-	var sampleName = "survey"
-	var inputPath = "/Users/caiyiming/SingleGA/Samples/survey50000.csv"
+//	var sampleName = "survey"
+//	var inputPath = "/Users/caiyiming/SingleGA/Samples/survey50000.csv"
 
 	var finalBNStructure:BNStructure = _
 
@@ -73,7 +90,7 @@ class SingleGA extends java.io.Serializable{
 		var BNStructurePopulation:Array[BNStructure] = score.calculateScore(BNMatrixPopulation,textfile,broadValueTpye.value)
 
 		//获取当前种群中的精英个体
-		var curBestBN = getEliteIndividual(BNStructurePopulation)
+		var curBestBN = getEliteIndividual(BNStructurePopulation,new BNStructure())
 
 
 		//进行迭代，每次按顺序执行锦标赛选择算子、均匀交叉算子、单点突变算子、BIC评分、获取精英个体、替换最差个体
@@ -94,7 +111,7 @@ class SingleGA extends java.io.Serializable{
 			//BIC评分
 			BNStructurePopulation = score.calculateScore(BNStructurePopulation.map(_.structure),textfile,broadValueTpye.value)
 			//获取精英个体
-			curBestBN = getEliteIndividual(BNStructurePopulation)
+			curBestBN = getEliteIndividual(BNStructurePopulation,curBestBN)
 			BNStructurePopulation = replaceLowestWithElite(BNStructurePopulation,curBestBN)
 
 			//判断迭代是否已经无法更优，若迭代已经连续30次相同的精英个体说明已经收敛
