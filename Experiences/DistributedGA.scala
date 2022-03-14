@@ -102,10 +102,16 @@ class DistributedGA extends java.io.Serializable{
 		//广播每个节点取值种类
 		val broadValueTpye = sc.broadcast(valueTypeSet)
 
+		//记录求节点取值种类所花时间
+		val getValueTpyeTime = System.currentTimeMillis()-startTime
+
 		/*
 			计算互信息矩阵
 		 */
 		val mutualInfoMatrix = MutualInformationUtils.getMutualInfoMatrix(textfile,copyNumOfAttributes,broadValueTpye.value,scoreJedisPipeline,sc,score.numOfSamples)
+
+		//记录计算互信息矩阵所花时间
+		val getMIMatrixTime = System.currentTimeMillis()-getValueTpyeTime
 
 		//通过互信息矩阵构造超结构
 		val SS = getSSWithMutualInfo(mutualInfoMatrix,copyNumOfAttributes)
@@ -113,15 +119,27 @@ class DistributedGA extends java.io.Serializable{
 		//广播超结构
 		val broadSS = sc.broadcast(SS)
 
+		//记录互信息构造超结构所花时间
+		val getSSTime = System.currentTimeMillis()-getMIMatrixTime
+
 		//通过超结构初始化BN结构种群,当前种群数量为numOfPopulation*2
 		val BNMatrixPopulation:RDD[DenseMatrix[Int]] = initPopulationAllWithRemoveCycleAndSS(numOfPopulation * 2,copyNumOfAttributes,sc,broadSS)
 		var BNStructurePopulationRDD:RDD[BNStructure] = BNMatrixPopulation.map(m=> new BNStructure(m)).cache()
 
+		//记录使用超结构初始化种群所花时间
+		val getPopulationWithSSTime = System.currentTimeMillis()-getSSTime
+
 		//对BN结构种群进行评分计算
 		var BNStructurePopulationArray = score.calculateScoreParallelWithRedis(BNStructurePopulationRDD,textfile,broadValueTpye,sc,scoreJedisPipeline)
 
+		//记录第一次计算评分所花时间
+		val firstCalScoreTime = System.currentTimeMillis()-getPopulationWithSSTime
+
 		//求出当前的最优个体
 		curBestBN = getEliteIndividual(BNStructurePopulationArray,curBestBN)
+
+		//记录求最优个体所花时间
+		val getEliteTime = System.currentTimeMillis()-firstCalScoreTime
 
 		//开始迭代
 		while(countIterNum < numOfMaxInterator && countBestSameTimes < 30){
@@ -159,8 +177,10 @@ class DistributedGA extends java.io.Serializable{
 
 			countIterNum += 1
 		}
+		//记录演化迭代阶段总耗时
+		val iterateTime = System.currentTimeMillis() - getEliteTime
 
-		//记录算法执行的时间
+		//记录算法执行总耗时
 		val executeTime:Double = (System.currentTimeMillis()-startTime)/1000.0
 
 		finalBNStructure = curBestBN
@@ -168,7 +188,14 @@ class DistributedGA extends java.io.Serializable{
 
 		//f1评分为评估学习的BN结构准确率
 		val f1Score:Double = EndUtils.evaluateAccuracyOfTruePositive(sampleName,finalBNStructure.structure,sc)
-
+		println("*****************************************************")
+		println("求节点取值种类耗时" + getValueTpyeTime)
+		println("计算互信息矩阵耗时" + getMIMatrixTime)
+		println("互信息构造超结构耗时" + getSSTime)
+		println("使用超结构初始化种群耗时" + getPopulationWithSSTime)
+		println("第一次计算评分耗时" + firstCalScoreTime)
+		println("求最优个体耗时" + getEliteTime)
+		println("演化迭代阶段总耗时" + iterateTime)
 		println("*****************************************************")
 		println("F1score: " + f1Score)
 		println("BICScore:" + finalBNStructure.score)
